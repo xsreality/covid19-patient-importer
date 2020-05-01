@@ -17,6 +17,7 @@ def acked(err, msg):
 
 def lambda_handler(event, context):
     covid19_api_state_data_url = os.getenv('COVID19_API_STATE_DATA_URL')
+    covid19_api_state_district_url = os.getenv('COVID19_API_STATE_DISTRICT_URL')
     bootstrap_servers = os.getenv('BOOTSTRAP_SERVERS')
     kafka_client_id = os.getenv('KAFKA_CLIENT_ID')
     kafka_state_data_topic_name = os.getenv('KAFKA_STATE_DATA_TOPIC_NAME')
@@ -41,6 +42,30 @@ def lambda_handler(event, context):
             logger.error('%% Local producer queue is full (%d messages awaiting delivery): try again\n' %
                          len(producer))
         producer.poll(0)
+    logger.info('%% Waiting for %d deliveries\n' % len(producer))
+    producer.flush()
+
+    # import raw district data
+    raw_district_data = requests.get(covid19_api_state_district_url).json()
+    for d in raw_district_data:
+        state = d['state']
+        district_data = d['districtData']
+        for dd in district_data:
+            district = dd['district']
+            key = dict({'state': state, 'district': district})
+            value = dict({'state': state, 'district': district, 'active': dd['active'], 'confirmed': dd['confirmed'],
+                          'recovered': dd['recovered'], 'deceased': dd['deceased'],
+                          'deltaConfirmed': dd['delta']['confirmed'],
+                          'deltaRecovered': dd['delta']['recovered'], 'deltaDeceased': dd['delta']['deceased'],
+                          'notes': dd['notes']
+                          })
+            try:
+                producer.produce(topic='districtwise-data', value=json.dumps(value), key=json.dumps(key),
+                                 on_delivery=acked)
+            except BufferError:
+                logger.error('%% Local producer queue is full (%d messages awaiting delivery): try again\n' %
+                             len(producer))
+            producer.poll(0)
     logger.info('%% Waiting for %d deliveries\n' % len(producer))
     producer.flush()
 
@@ -81,8 +106,8 @@ def lambda_handler(event, context):
 
     # send update on TG channel
     bot.send_message(chat_id=telegram_chat_id,
-                     text='Imported {} states data and {} total testing data into Kafka'.format(
-                         len(state_data_json['statewise']), test_data_count))
+                     text='Imported {} states data, {} district data and {} total testing data into Kafka'.format(
+                         len(state_data_json['statewise']), len(raw_district_data), test_data_count))
 
 
 if __name__ == '__main__':
