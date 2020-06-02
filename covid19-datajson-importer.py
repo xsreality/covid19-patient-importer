@@ -50,8 +50,11 @@ def lambda_handler(event, context):
     for d in raw_district_data:
         state = d['state']
         district_data = d['districtData']
+        unknown_district = False
+
         for dd in district_data:
             district = dd['district']
+            unknown_district = True if district == 'Unknown' else False
             key = dict({'state': state, 'district': district})
             value = dict({'state': state, 'district': district, 'active': dd['active'], 'confirmed': dd['confirmed'],
                           'recovered': dd['recovered'], 'deceased': dd['deceased'],
@@ -66,6 +69,21 @@ def lambda_handler(event, context):
                 logger.error('%% Local producer queue is full (%d messages awaiting delivery): try again\n' %
                              len(producer))
             producer.poll(0)
+
+        if not unknown_district:
+            key = dict({'state': state, 'district': 'Unknown'})
+            value = dict({'state': state, 'district': 'Unknown',
+                          'active': 0, 'confirmed': 0, 'recovered': 0, 'deceased': 0,
+                          'deltaConfirmed': 0, 'deltaRecovered': 0, 'deltaDeceased': 0, 'notes': ''
+                          })
+            try:
+                producer.produce(topic='districtwise-data', value=json.dumps(value), key=json.dumps(key),
+                                 on_delivery=acked)
+            except BufferError:
+                logger.error('%% Local producer queue is full (%d messages awaiting delivery): try again\n' %
+                             len(producer))
+            producer.poll(0)
+
     logger.info('%% Waiting for %d deliveries\n' % len(producer))
     producer.flush()
 
